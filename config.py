@@ -1,0 +1,2 @@
+TOKEN = 'TOKEN BURAYA!!'
+DATABASE = 'data.db'
