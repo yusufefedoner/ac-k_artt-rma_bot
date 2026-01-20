@@ -4,39 +4,56 @@ from logic import DatabaseManager, hide_img
 from config import TOKEN, DATABASE
 import os
 
+ADMIN_ID = 123456789012345678  # KENDİ DISCORD ID’Nİ YAZ
+
 intents = discord.Intents.default()
-intents.messages = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 manager = DatabaseManager(DATABASE)
 manager.create_tables()
 
-# Kullanıcı kaydı için bir komut
+# ================= START =================
 @bot.command()
 async def start(ctx):
-    user_id = ctx.author.id
-    if user_id in manager.get_users():
-        await ctx.send("Zaten kayıtlısınız!")
-    else:
-        manager.add_user(user_id, ctx.author.name)
-        await ctx.send("""Merhaba! Hoş geldiniz! Başarılı bir şekilde kaydoldunuz! Her dakika yeni resimler alacaksınız ve bunları elde etme şansınız olacak! Bunu yapmak için “Al!” butonuna tıklamanız gerekiyor! Sadece “Al!” butonuna tıklayan ilk üç kullanıcı resmi alacaktır! =)""")
+    manager.add_user(ctx.author.id, ctx.author.name)
+    await ctx.send("Kaydoldun! Açık artırmaya hazırsın 🎉")
 
-# Resim göndermek için zamanlanmış bir görev
+# ================= BONUS =================
+@bot.command()
+async def bonus(ctx):
+    b = manager.get_bonus(ctx.author.id)
+    await ctx.send(f"⭐ Bonus puanın: {b}")
+
+@bot.command()
+async def give_bonus(ctx, member: discord.Member, amount: int):
+    if ctx.author.id != ADMIN_ID:
+        await ctx.send("Bu komutu sadece admin kullanabilir.")
+        return
+    manager.add_bonus(member.id, amount)
+    await ctx.send(f"{member.name} kullanıcısına {amount} bonus verildi.")
+
+# ================= AÇIK ARTIRMA =================
 @tasks.loop(minutes=1)
 async def send_message():
+    prize = manager.get_random_prize()
+    if not prize:
+        return
+
+    prize_id, img = prize
+    hide_img(img)
+
     for user_id in manager.get_users():
-        prize_id, img = manager.get_random_prize()[:2]
-        hide_img(img)
-        user = await bot.fetch_user(user_id) 
+        user = await bot.fetch_user(user_id)
         if user:
             await send_image(user, f'hidden_img/{img}', prize_id)
-        manager.mark_prize_used(prize_id)
+
+    manager.mark_prize_used(prize_id)
 
 async def send_image(user, image_path, prize_id):
-    with open(image_path, 'rb') as img:
-        file = discord.File(img)
+    with open(image_path, "rb") as f:
+        file = discord.File(f)
         button = discord.ui.Button(label="Al!", custom_id=str(prize_id))
         view = discord.ui.View()
         view.add_item(button)
@@ -45,19 +62,27 @@ async def send_image(user, image_path, prize_id):
 @bot.event
 async def on_interaction(interaction):
     if interaction.type == discord.InteractionType.component:
-        custom_id = interaction.data['custom_id']
+        prize_id = int(interaction.data["custom_id"])
         user_id = interaction.user.id
-        img = manager.get_prize_img(custom_id)
-        if manager.add_winner(user_id, custom_id):
-            with open(f'img/{img}', 'rb') as photo:
-                file = discord.File(photo)
-                await interaction.response.send_message(file=file, content="Tebrikler, resmi aldınız!")
+
+        if manager.add_winner(user_id, prize_id):
+            manager.add_bonus(user_id, 2)
+            img = manager.get_prize_img(prize_id)
+            with open(f'img/{img}', 'rb') as f:
+                await interaction.response.send_message(
+                    content="🎉 Kazandın! +2 bonus",
+                    file=discord.File(f)
+                )
         else:
-            await interaction.response.send_message(content="Maalesef, bu resmi bir başkası çoktan aldı...", ephemeral=True)
+            manager.add_bonus(user_id, 1)
+            await interaction.response.send_message(
+                content="Kaçırdın ama +1 bonus kazandın ⭐",
+                ephemeral=True
+            )
 
 @bot.event
 async def on_ready():
-    print(f'{bot.user} olarak giriş yapıldı!')
+    print("Bot çalışıyor!")
     if not send_message.is_running():
         send_message.start()
 
